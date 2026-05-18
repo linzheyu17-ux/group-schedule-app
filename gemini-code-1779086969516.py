@@ -33,17 +33,26 @@ def get_global_db():
 
 
 def ensure_state() -> None:
-    query_params = st.query_params
-    default_room = query_params.get("room", "預設房間")
+    # 安全取得當前網址參數，避免觸發自動刷新無窮迴圈
+    room_param = st.query_params.get("room", "預設房間")
 
     if "current_room" not in st.session_state:
-        st.session_state.current_room = default_room
+        st.session_state.current_room = room_param
 
     # 取得全域共用資料庫
     global_db = get_global_db()
     room = st.session_state.current_room
 
-    # 將當前房間的資料指標綁定到捷徑變數
+    # 直接從全域資料庫讀取/初始化，確保安全綁定
+    if "members" not in global_db[room]:
+        global_db[room]["members"] = []
+    if "availability" not in global_db[room]:
+        global_db[room]["availability"] = {}
+    if "selected_modules" not in global_db[room]:
+        global_db[room]["selected_modules"] = ["討論時間安排", "合作規範系統"]
+    if "norm_candidates" not in global_db[room]:
+        global_db[room]["norm_candidates"] = []
+
     st.session_state.members = global_db[room]["members"]
     st.session_state.availability = global_db[room]["availability"]
     st.session_state.selected_modules = global_db[room]["selected_modules"]
@@ -349,14 +358,4 @@ def render_schedule_module() -> None:
             st.caption("🌙 晚上 (18:00 - 22:00)")
             cols_evening = st.columns(4)
             
-            m_idx, a_idx, e_idx = 0, 0, 0
-            for s in slots:
-                slot_key = f"{d.isoformat()} {s}"
-                is_checked = slot_key in st.session_state[temp_key]
-                
-                if s < "12:00":
-                    col = cols_morning[m_idx % 4]
-                    m_idx += 1
-                elif s < "18:00":
-                    col = cols_afternoon[a_idx % 4]
-                    a_idx += 1
+            m_idx, a_idx, e_idx = 0,
