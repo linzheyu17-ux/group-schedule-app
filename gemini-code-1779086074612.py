@@ -9,8 +9,6 @@ from uuid import uuid4
 import streamlit as st
 
 
-ROLES = ["組長", "紀錄者", "簡報負責人", "資料蒐集", "時間管理", "組員"]
-AVATARS = ["🟦", "🟩", "🟨", "🟧", "🟪", "⭐", "🌿", "📌"]
 # 精簡模組：只留下討論時間與合作規範
 MODULES = ["討論時間安排", "合作規範系統"]
 TIME_OPTIONS = [1, 2, 3, 6, 12, 24, 48]
@@ -24,21 +22,33 @@ st.set_page_config(
 
 
 def ensure_state() -> None:
-    defaults = {
-        "members": [],
-        "availability": {},
-        # 修正 Bug：直接在初始化時就預設啟用這兩個核心模組
-        "selected_modules": ["討論時間安排", "合作規範系統"],
-        "norm_candidates": [],
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    # 讀取網址中的房間參數 (例如 ?room=123)
+    query_params = st.query_params
+    default_room = query_params.get("room", "預設房間")
+
+    if "current_room" not in st.session_state:
+        st.session_state.current_room = default_room
+
+    # 依據不同房間獨立儲存資料的字典結構
+    if "rooms_data" not in st.session_state:
+        st.session_state.rooms_data = defaultdict(lambda: {
+            "members": [],
+            "availability": {},
+            "selected_modules": ["討論時間安排", "合作規範系統"],
+            "norm_candidates": [],
+        })
+
+    # 將目前房間的資料綁定到捷徑變數，方便後續程式碼讀取
+    room = st.session_state.current_room
+    st.session_state.members = st.session_state.rooms_data[room]["members"]
+    st.session_state.availability = st.session_state.rooms_data[room]["availability"]
+    st.session_state.selected_modules = st.session_state.rooms_data[room]["selected_modules"]
+    st.session_state.norm_candidates = st.session_state.rooms_data[room]["norm_candidates"]
 
 
 def member_label(member: dict) -> str:
     display_name = member["nickname"] or member["name"]
-    return f'{member["avatar"]} {display_name}｜{member["role"]}'
+    return f'👤 {display_name}'
 
 
 def active_member_ids() -> list[str]:
@@ -159,7 +169,7 @@ def add_norm_candidate(raw_text: str) -> tuple[bool, str]:
         if result["parameter"] is not None:
             existing["options"].add(result["parameter"])
         existing["sources"].append(raw_text.strip())
-        return True, "已整併到既有條文，並更新參數選項。"
+        return True, "已整併到既有條文，並更新參數选项。"
 
     option = result["parameter"]
     st.session_state.norm_candidates.append(
@@ -199,18 +209,40 @@ def candidate_status(candidate: dict) -> tuple[str, int, int, int | None]:
 
 def render_header() -> None:
     st.title("🤝 小組協作平台")
-    st.caption("建立組員名單，即可同步進行開會時間協調與合作公約匿名徵集背書。")
+    st.caption("建立獨立討論房間、設定成員名單，即可進行時間協調與合作公約匿名徵集背書。")
+
+
+def render_room_setup() -> None:
+    st.subheader("🚪 房間系統設定")
+    with st.container(border=True):
+        st.write(f"🏠 目前所在房間：**{st.session_state.current_room}**")
+        
+        # 讓使用者輸入想切換或創建的房間名稱
+        next_room = st.text_input("輸入房間名稱以切換或創建：", placeholder="例如：企劃一組、期末專題")
+        
+        c1, c2 = st.columns(2)
+        if c1.button("進入 / 建立房間", use_container_width=True, type="primary"):
+            if next_room.strip():
+                st.session_state.current_room = next_room.strip()
+                # 同步更新網址參數，方便複製網址給組員
+                st.query_params["room"] = next_room.strip()
+                st.success(f"已成功切換至房間：{next_room.strip()}")
+                st.rerun()
+            else:
+                st.error("房間名稱不能為空！")
+                
+        # 一鍵複製專屬房間連結
+        if c2.button("📋 複製此房間連結", use_container_width=True):
+            st.info("請直接複製瀏覽器上方網址列網連結給組員，即可一同進入此房間！")
 
 
 def render_member_setup() -> None:
-    st.subheader("1. 基本資料設定")
+    st.subheader("1. 成員名單設定")
     with st.form("member_form", clear_on_submit=True):
-        cols = st.columns([1.2, 1.2, 1, 1])
+        cols = st.columns([2, 2, 1])
         name = cols[0].text_input("姓名", placeholder="例如：王小明")
         nickname = cols[1].text_input("暱稱", placeholder="可留空")
-        role = cols[2].selectbox("小組身份", ROLES)
-        avatar = cols[3].selectbox("預設頭貼", AVATARS)
-        submitted = st.form_submit_button("加入小組", use_container_width=True)
+        submitted = cols[2].form_submit_button("加入小組", use_container_width=True)
 
     if submitted:
         if not name.strip() and not nickname.strip():
@@ -221,13 +253,11 @@ def render_member_setup() -> None:
                     "id": uuid4().hex,
                     "name": name.strip() or nickname.strip(),
                     "nickname": nickname.strip(),
-                    "role": role,
-                    "avatar": avatar,
                 }
             )
             st.success("成員已加入。")
 
-    st.metric("目前已加入人數", len(st.session_state.members))
+    st.metric("目前房間總人數", len(st.session_state.members))
     if st.session_state.members:
         for member in st.session_state.members:
             cols = st.columns([5, 1])
@@ -239,7 +269,7 @@ def render_member_setup() -> None:
                 st.session_state.availability.pop(member["id"], None)
                 st.rerun()
     else:
-        st.info("尚未有成員加入。")
+        st.info("當前房間尚未有成員加入。")
 
 
 def render_module_picker() -> None:
@@ -273,19 +303,17 @@ def render_schedule_module() -> None:
     selected_label = st.selectbox("🎯 請選擇目前正在填寫的成員", list(member_options.keys()))
     selected_member_id = member_options[selected_label]
 
-    # 初始化該成員在 session_state 中的暫存集合
     temp_key = f"temp_slots_{selected_member_id}"
     if temp_key not in st.session_state:
         st.session_state[temp_key] = set(st.session_state.availability.get(selected_member_id, set()))
 
     st.markdown(f"#### ✍️ 請勾選 **{selected_label}** 可以配合的時段")
     
-    # 快捷功能區
     st.write("💡 **快捷填寫按鈕：**")
     c1, c2, c3 = st.columns(3)
     if c1.button("📅 平日晚上全部勾選 (18:00後)", key=f"quick_p_{selected_member_id}", use_container_width=True):
         for d in days:
-            if d.weekday() < 5:  # 週一至週五
+            if d.weekday() < 5:
                 for s in slots:
                     if s >= "18:00":
                         st.session_state[temp_key].add(f"{d.isoformat()} {s}")
@@ -293,7 +321,7 @@ def render_schedule_module() -> None:
         
     if c2.button("🏖️ 假日整天全部勾選", key=f"quick_h_{selected_member_id}", use_container_width=True):
         for d in days:
-            if d.weekday() >= 5:  # 週六週日
+            if d.weekday() >= 5:
                 for s in slots:
                     st.session_state[temp_key].add(f"{d.isoformat()} {s}")
         st.rerun()
@@ -302,7 +330,6 @@ def render_schedule_module() -> None:
         st.session_state[temp_key].clear()
         st.rerun()
 
-    # 日曆課表網格網頁化 (Tabs)
     day_tabs = st.tabs([d.strftime("%m/%d (%a)") for d in days])
     for i, d in enumerate(days):
         with day_tabs[i]:
@@ -321,205 +348,3 @@ def render_schedule_module() -> None:
                 is_checked = slot_key in st.session_state[temp_key]
                 
                 if s < "12:00":
-                    col = cols_morning[m_idx % 4]
-                    m_idx += 1
-                elif s < "18:00":
-                    col = cols_afternoon[a_idx % 4]
-                    a_idx += 1
-                else:
-                    col = cols_evening[e_idx % 4]
-                    e_idx += 1
-                    
-                if col.checkbox(s, value=is_checked, key=f"cb_{slot_key}_{selected_member_id}"):
-                    st.session_state[temp_key].add(slot_key)
-                else:
-                    st.session_state[temp_key].discard(slot_key)
-
-    if st.button("💾 儲存該成員時間資料", type="primary", use_container_width=True):
-        st.session_state.availability[selected_member_id] = set(st.session_state[temp_key])
-        st.success(f"{selected_label} 的可參與時段已儲存並同步！")
-
-    # ==================== 統計與視覺化熱點區 ====================
-    st.divider()
-    st.markdown("#### 📊 小組時間熱點統整 (When2meet 模式)")
-    completed = len([mid for mid in active_member_ids() if mid in st.session_state.availability and st.session_state.availability[mid]])
-    st.progress(completed / len(st.session_state.members), text=f"填寫進度：已填寫 {completed} / {len(st.session_state.members)} 人")
-
-    if st.session_state.availability:
-        # 建立結構化矩陣資料
-        grid_data = {}
-        for s in slots:
-            grid_data[s] = {}
-            for d in days:
-                slot_key = f"{d.isoformat()} {s}"
-                avail_members = [
-                    member for member in st.session_state.members
-                    if slot_key in st.session_state.availability.get(member["id"], set())
-                ]
-                grid_data[s][d.strftime("%m/%d (%a)")] = avail_members
-
-        # 找出符合門檻的最佳時段
-        counts = []
-        for d in days:
-            for s in slots:
-                slot_key = f"{d.isoformat()} {s}"
-                avail_members = grid_data[s][d.strftime("%m/%d (%a)")]
-                if len(avail_members) >= majority_count():
-                    counts.append((d.strftime("%m/%d (%a)"), s, len(avail_members), avail_members))
-
-        st.markdown("**🏆 推薦開會時段（滿足過半數成員）：**")
-        if not counts:
-            st.info(f"💡 目前尚未有時段達到過半數門檻 ({majority_count()}人)。")
-        else:
-            counts.sort(key=lambda item: (-item[2], item[0], item[1]))
-            for idx, (d_str, s_str, count, members) in enumerate(counts[:3]):
-                names = "、".join(member["name"] for member in members)
-                st.success(f"**第 {idx+1} 推薦**：{d_str} {s_str} ｜ 形式：{mode} ｜ 共 **{count}** 人有空 ({names})")
-
-        # 繪製視覺化 HTML 熱點表格
-        st.markdown("**📅 完整時間縱覽表（綠色越深代表越多人有空，滑鼠移上去格子上可看名單）：**")
-        
-        html_table = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
-        html_table += "<tr style='background-color:#f1f3f5; font-weight:bold;'><th style='border:1px solid #dee2e6; padding:8px;'>時間</th>"
-        for d in days:
-            html_table += f"<th style='border:1px solid #dee2e6; padding:8px;'>{d.strftime('%m/%d<br>(%a)')}</th>"
-        html_table += "</tr>"
-        
-        total_m = len(st.session_state.members)
-        for s in slots:
-            html_table += f"<tr><td style='border:1px solid #dee2e6; font-weight:bold; background-color:#f8f9fa; padding:4px; font-size:13px;'>{s}</td>"
-            for d in days:
-                d_str = d.strftime("%m/%d (%a)")
-                avail_list = grid_data[s][d_str]
-                count = len(avail_list)
-                
-                # 計算顏色深淺 (Green Alpha)
-                alpha = count / total_m if total_m else 0
-                bg_color = f"rgba(40, 167, 69, {alpha * 0.75})" if count > 0 else "transparent"
-                text_color = "#ffffff" if alpha > 0.5 else "#212529"
-                
-                names_tooltip = "&#10;".join(m["name"] + f"({m['role']})" for m in avail_list) if avail_list else "無人有空"
-                
-                html_table += f"<td title='有空的人：&#10;{names_tooltip}' style='border:1px solid #dee2e6; background-color:{bg_color}; color:{text_color}; padding:6px; font-size:12px; cursor:help;'>"
-                html_table += f"<b>{count}/{total_m}</b>"
-                html_table += "</td>"
-            html_table += "</tr>"
-        html_table += "</table>"
-        
-        st.components.v1.html(html_table, height=500, scroller=True)
-
-
-def render_norms_module() -> None:
-    st.subheader("⚖️ 合作規範系統")
-    if not st.session_state.members:
-        st.info("請先加入成員，系統才能計算支持率。")
-
-    with st.form("norm_form", clear_on_submit=True):
-        raw_text = st.text_area(
-            "匿名規範徵集",
-            placeholder="例如：群組訊息應該在 3 小時內回覆、開會要準時、分工需提前回報進度",
-            height=100,
-        )
-        submitted = st.form_submit_button("送出並整合")
-
-    if submitted:
-        ok, message = add_norm_candidate(raw_text)
-        if ok:
-            st.success(message)
-        else:
-            st.warning(message)
-
-    member_options = {member_label(member): member["id"] for member in st.session_state.members}
-    voter_id = None
-    if member_options:
-        voter_label = st.selectbox("背書成員", list(member_options.keys()), key="norm_voter")
-        voter_id = member_options[voter_label]
-
-    st.markdown("**📜 背書區**")
-    if not st.session_state.norm_candidates:
-        st.info("尚無合格條文。")
-    for candidate in st.session_state.norm_candidates:
-        status, support_count, opponent_count, preferred_option = candidate_status(candidate)
-        with st.container(border=True):
-            st.caption(candidate["category"])
-            st.write(candidate["standard"])
-            cols = st.columns([1, 1, 1, 2])
-            cols[0].metric("支持", support_count)
-            cols[1].metric("不可行", opponent_count)
-            cols[2].metric("狀態", status)
-            if preferred_option is not None:
-                cols[3].metric("目前偏好參數", f"{preferred_option} 小時")
-            elif candidate["options"]:
-                cols[3].metric("參數選項", "、".join(f"{item} 小時" for item in sorted(candidate["options"])))
-            else:
-                cols[3].write("無參數衝突")
-
-            if voter_id:
-                action_cols = st.columns([1, 1, 2])
-                if candidate["options"]:
-                    option = action_cols[2].selectbox(
-                        "支持時選擇偏好時間",
-                        sorted(candidate["options"] | set(TIME_OPTIONS)),
-                        key=f"pref_{candidate['id']}_{voter_id}",
-                        format_func=lambda value: f"{value} 小時",
-                    )
-                else:
-                    option = None
-                if action_cols[0].button("支持", key=f"support_{candidate['id']}_{voter_id}"):
-                    candidate["supporters"].add(voter_id)
-                    candidate["opponents"].discard(voter_id)
-                    if option is not None:
-                        candidate["preferences"][voter_id] = option
-                    st.rerun()
-                if action_cols[1].button("不可行", key=f"oppose_{candidate['id']}_{voter_id}"):
-                    candidate["opponents"].add(voter_id)
-                    candidate["supporters"].discard(voter_id)
-                    candidate["preferences"].pop(voter_id, None)
-                    st.rerun()
-
-    active_items = []
-    pending_items = []
-    for candidate in st.session_state.norm_candidates:
-        status, support_count, opponent_count, preferred_option = candidate_status(candidate)
-        record = (candidate, status, support_count, opponent_count, preferred_option)
-        if status == "Active":
-            active_items.append(record)
-        elif status == "待議":
-            pending_items.append(record)
-
-    st.markdown("**✅ 正式公約區**")
-    if not active_items:
-        st.info("尚無達成高共識的條文。")
-    for candidate, _, support_count, _, preferred_option in active_items:
-        text = candidate["standard"]
-        if preferred_option is not None:
-            text = re.sub(r"\d{1,2}\s*小時", f"{preferred_option} 小時", text)
-        st.success(f"Active ｜ {text} ｜ 支持 {support_count}/{len(st.session_state.members)}")
-
-    st.markdown("**⚠️ 待議區**")
-    if not pending_items:
-        st.info("目前沒有低支持度提案。")
-    for candidate, _, support_count, opponent_count, _ in pending_items:
-        st.warning(
-            f"待議 ｜ {candidate['standard']} ｜ 支持 {support_count}、不可行 {opponent_count}。"
-        )
-
-
-def main() -> None:
-    ensure_state()
-    render_header()
-    left, right = st.columns([1, 2])
-    with left:
-        render_member_setup()
-        render_module_picker()
-    with right:
-        # 只保留與選取相符的兩大模組渲染
-        if "討論時間安排" in st.session_state.selected_modules:
-            render_schedule_module()
-            st.divider()
-        if "合作規範系統" in st.session_state.selected_modules:
-            render_norms_module()
-
-
-if __name__ == "__main__":
-    main()
