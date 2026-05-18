@@ -490,7 +490,7 @@ def render_norms_module() -> None:
             if voter_id:
                 action_cols = st.columns([1, 1, 2])
                 if candidate["options"]:
-                    option = action_cols[2].selectbox(
+                    option = action_cols[2].selectbox()
                         "支持時選擇偏好時間",
                         sorted(candidate["options"] | set(TIME_OPTIONS)),
                         key=f"pref_{candidate['id']}_{voter_id}",
