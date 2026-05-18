@@ -21,10 +21,9 @@ st.set_page_config(
 )
 
 
-# 🌟 關鍵修改：利用 cache_resource 建立全域、跨瀏覽器共用的記憶體資料庫
+# 利用 cache_resource 建立全域、跨瀏覽器共用的記憶體資料庫
 @st.cache_resource
 def get_global_db():
-    # 這樣所有打開網頁的人，都會存取到同一個 dict 結構
     return defaultdict(lambda: {
         "members": [],
         "availability": {},
@@ -237,7 +236,6 @@ def render_room_setup() -> None:
         if c2.button("📋 複製此房間連結", use_container_width=True):
             st.info("請直接複製瀏覽器上方網址列連結給組員，即可一同進入此房間！")
             
-        # 💡 新增手動刷新按鈕，方便組員一鍵同步最新狀態
         if c3.button("🔄 刷新資料", use_container_width=True):
             st.rerun()
 
@@ -471,6 +469,7 @@ def render_norms_module() -> None:
     st.markdown("**📜 背書區**")
     if not st.session_state.norm_candidates:
         st.info("尚無合格條文。")
+    
     for candidate in st.session_state.norm_candidates:
         status, support_count, opponent_count, preferred_option = candidate_status(candidate)
         with st.container(border=True):
@@ -490,8 +489,70 @@ def render_norms_module() -> None:
             if voter_id:
                 action_cols = st.columns([1, 1, 2])
                 if candidate["options"]:
-                    option = action_cols[2].selectbox()
+                    option = action_cols[2].selectbox(
                         "支持時選擇偏好時間",
                         sorted(candidate["options"] | set(TIME_OPTIONS)),
                         key=f"pref_{candidate['id']}_{voter_id}",
-                        format_
+                        format_func=lambda value: f"{value} 小時"
+                    )
+                else:
+                    option = None
+                
+                if action_cols[0].button("支持", key=f"support_{candidate['id']}_{voter_id}"):
+                    candidate["supporters"].add(voter_id)
+                    candidate["opponents"].discard(voter_id)
+                    if option is not None:
+                        candidate["preferences"][voter_id] = option
+                    st.rerun()
+                if action_cols[1].button("不可行", key=f"oppose_{candidate['id']}_{voter_id}"):
+                    candidate["opponents"].add(voter_id)
+                    candidate["supporters"].discard(voter_id)
+                    candidate["preferences"].pop(voter_id, None)
+                    st.rerun()
+
+    active_items = []
+    pending_items = []
+    for candidate in st.session_state.norm_candidates:
+        status, support_count, opponent_count, preferred_option = candidate_status(candidate)
+        record = (candidate, status, support_count, opponent_count, preferred_option)
+        if status == "Active":
+            active_items.append(record)
+        elif status == "待議":
+            pending_items.append(record)
+
+    st.markdown("**✅ 正式公約區**")
+    if not active_items:
+        st.info("尚無達成高共識的條文。")
+    for candidate, _, support_count, _, preferred_option in active_items:
+        text = candidate["standard"]
+        if preferred_option is not None:
+            text = re.sub(r"\d{1,2}\s*小時", f"{preferred_option} 小時", text)
+        st.success(f"Active ｜ {text} ｜ 支持 {support_count}/{len(st.session_state.members)}")
+
+    st.markdown("**⚠️ 待議區**")
+    if not pending_items:
+        st.info("目前沒有低支持度提案。")
+    for candidate, _, support_count, opponent_count, _ in pending_items:
+        st.warning(
+            f"待議 ｜ {candidate['standard']} ｜ 支持 {support_count}、不可行 {opponent_count}。"
+        )
+
+
+def main() -> None:
+    ensure_state()
+    render_header()
+    left, right = st.columns([1, 2])
+    with left:
+        render_room_setup()      
+        render_member_setup()
+        render_module_picker()
+    with right:
+        if "討論時間安排" in st.session_state.selected_modules:
+            render_schedule_module()
+            st.divider()
+        if "合作規範系統" in st.session_state.selected_modules:
+            render_norms_module()
+
+
+if __name__ == "__main__":
+    main()
