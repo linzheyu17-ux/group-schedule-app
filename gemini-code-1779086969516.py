@@ -360,27 +360,3 @@ def render_schedule_module() -> None:
                 elif s < "18:00":
                     col = cols_afternoon[a_idx % 4]
                     a_idx += 1
-                else:
-                    col = cols_evening[e_idx % 4]
-                    e_idx += 1
-                    
-                if col.checkbox(s, value=is_checked, key=f"cb_{slot_key}_{selected_member_id}"):
-                    st.session_state[temp_key].add(slot_key)
-                else:
-                    st.session_state[temp_key].discard(slot_key)
-
-    if st.button("💾 儲存該成員時間資料", type="primary", use_container_width=True):
-        st.session_state.availability[selected_member_id] = set(st.session_state[temp_key])
-        st.success(f"{selected_label} 的可參與時段已儲存並同步！")
-        st.rerun()
-
-    st.divider()
-    st.markdown("#### 📊 小組時間熱點統整 (When2meet 模式)")
-    completed = len([mid for mid in active_member_ids() if mid in st.session_state.availability and st.session_state.availability[mid]])
-    st.progress(completed / len(st.session_state.members), text=f"填寫進度：已填寫 {completed} / {len(st.session_state.members)} 人")
-
-    if st.session_state.availability:
-        grid_data = {}
-        for s in slots:
-            grid_data[s] = {}
-            for d in days:
